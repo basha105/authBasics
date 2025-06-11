@@ -1,3 +1,4 @@
+const bcrypt = require("bcryptjs");
 const path = require("node:path");
 const { Pool } = require("pg");
 const express = require("express");
@@ -19,13 +20,15 @@ app.use(express.urlencoded({ extended: false }));
 
 app.post("/sign-up", async (req, res, next) => {
     try {
+        const hashedPassword = await bcrypt.hash(req.body.password, 10);
         await pool.query("INSERT INTO USERS (username, password) VALUES ($1, $2)", [
             req.body.username,
-            req.body.password,
+            hashedPassword,
         ]);
         res.redirect("/");
-    } catch(err) {
-        return next(err);
+    } catch(error) {
+        console.error(error);
+        next(error);
     }
 });
 
@@ -34,11 +37,12 @@ passport.use(
         try {
             const { rows } = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
             const user = rows[0];
+            const match = await bcrypt.compare(password, user.password);
 
             if (!user) {
                 return done(null, false, { message: "Incorrect username" });
             }
-            if (user.password !== password) {
+            if (!match) {
                 return done(null, false, { message: "Incorrect password" });
             }
             return done(null, user);
@@ -48,6 +52,41 @@ passport.use(
     })
 );
 
+passport.serializeUser((user, done) => { 
+    done(null, user.id);
+});
+
+passport.deserializeUser(async (id, done) => {
+    try {
+        const { rows } = await pool.query("SELECT * FROM users WHERE ID = $1", [id]);
+        const user = rows[0];
+        done(null, user);
+    } catch(err) {
+        done(err);
+    }
+
+});
+
+app.get("/log-out", (req, res, next) => {
+    req.logout((err) => { 
+        if (err) {
+            return next(err);
+        }
+        res.redirect("/");
+    });
+});
+
 app.get("/sign-up", (req, res) => res.render("sign-up-form"));
-app.get("/", (req, res) => res.render("index"));
+app.get("/", (req, res) => {
+    res.render("index", { user: req.user });
+});
+app.post(
+    "/log-in",
+    passport.authenticate("local", {
+        successRedirect: "/",
+        failureRedirect: "/"
+    })
+);
+
+
 app.listen(3000, () => console.log("app listening on port 3000"));
